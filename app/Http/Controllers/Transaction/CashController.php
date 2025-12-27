@@ -16,6 +16,7 @@ use App\Models\CashAdjustment;
 use App\Enums\PaymentTypesUniqueCode;
 use App\Models\Expenses\Expense;
 use App\Models\Party\PartyPayment;
+use App\Models\Party\PartyTransaction;
 use App\Services\PartyService;
 use App\Models\Purchase\Purchase;
 use App\Models\Sale\Sale;
@@ -608,10 +609,232 @@ class CashController extends Controller
 
 
 
+// public function datatableListLedger(Request $request)
+// {
+//     $cashId     = $this->paymentTypeService->returnPaymentTypeId(PaymentTypesUniqueCode::CASH->value);
+//     $chequeId   = $this->paymentTypeService->returnPaymentTypeId(PaymentTypesUniqueCode::CHEQUE->value);
+//     $dangerTypes = ['Expense', 'Purchase', 'Sale Return', 'Purchase Order'];
+//     $this->paymentTransactionService->usedTransactionTypeValue();
+//     $fromDate = $request->from_date ? $this->toSystemDateFormat($request->from_date) : null;
+//     $toDate   = $request->to_date ? $this->toSystemDateFormat($request->to_date) : null;
+//     $partyId = $request->party_id;
+//     $partyType = $request->party_type;
+
+//     $certainPartyRelatedMorphKeys = [
+//         'Party Payment',
+//         'Purchase',
+//         'Sale',
+//         'Sale Return',
+//         'Purchase Return',
+//     ];
+
+//     $allowedTypes = [
+//         'Sale',
+//         'Purchase',
+//         'Party Payment',
+//         'Sale Return',
+//         'Purchase Return',
+//     ];
+
+//     $partyFilter = function (EloquentBuilder $q) use ($partyId, $partyType, $certainPartyRelatedMorphKeys) {
+//         if ($partyId || $partyType) {
+//             $q->whereHasMorph(
+//                 'transaction',
+//                 $certainPartyRelatedMorphKeys,
+//                 function ($r) use ($partyId, $partyType) {
+//                     if ($partyId) {
+//                         $r->where('party_id', $partyId);
+//                     } elseif ($partyType) {
+//                         $r->whereHas('party', fn($p) => $p->where('party_type', $partyType));
+//                     }
+//                 }
+//             );
+//         }
+//     };
+
+//     $baseQuery = PaymentTransaction::with('transaction', 'paymentType')
+//         ->whereIn('transaction_type', $allowedTypes)
+//         ->when($fromDate, fn($q) => $q->where('transaction_date', '>=', $fromDate))
+//         ->when($toDate, fn($q) => $q->where('transaction_date', '<=', $toDate));
+
+//     $cashFlow = (clone $baseQuery)
+//         ->where(function ($q) use ($cashId) {
+//             $q->where('payment_type_id', $cashId)
+//                 ->orWhere('transfer_to_payment_type_id', $cashId);
+//         })
+//         ->when($partyId || $partyType, $partyFilter)
+//         ->get()
+//         ->map(fn($row) => tap($row, fn(&$r) => $r->flow_type = 'cash'));
+
+//     $bankFlow = (clone $baseQuery)
+//         ->where(function ($q) use ($cashId, $chequeId) {
+//             $q->whereNotIn('payment_type_id', [$cashId, $chequeId])
+//                 ->orWhereNotIn('transfer_to_payment_type_id', [$cashId, $chequeId]);
+//         })
+//         ->when($partyId || $partyType, $partyFilter)
+//         ->get()
+//         ->map(fn($row) => tap($row, fn(&$r) => $r->flow_type = 'bank'));
+
+//     $transactions = $cashFlow->merge($bankFlow)
+//         ->sortBy(fn($row) => $row->transaction_date . ' ' . $row->created_at)
+//         ->values();
+
+//     $balance = 0;
+//     $finalPartyLedgerBalance = null;
+//     $finalBalanceStatus = null;
+//     $finalBalanceClass = '';
+
+//     $transactions = $transactions->map(function ($row) use (&$balance, &$finalPartyLedgerBalance, &$finalBalanceStatus, &$finalBalanceClass, $dangerTypes, $partyId) {
+
+//         $isCashIn = true;
+//         if (!empty($row->type_of_payment)) {
+//             $type = strtolower(trim($row->type_of_payment));
+//             if ($type === 'receive') $isCashIn = true;
+//             elseif ($type === 'pay') $isCashIn = false;
+//             else $isCashIn = !in_array($row->transaction_type, $dangerTypes);
+//         } else {
+//             $isCashIn = !in_array($row->transaction_type, $dangerTypes);
+//         }
+
+//         $row->cash_in = $isCashIn ? $row->amount : 0;
+//         $row->cash_out = !$isCashIn ? $row->amount : 0;
+//         $grandTotal = $row->transaction->grand_total ?? 0;
+//         $row->grandTotal = $grandTotal;
+
+//         $rawTotalDue = 0;
+//         if ($row->transaction?->party) {
+//             $row->balanceData = $this->partyService->getPartyBalance([$row->transaction->party->id]);
+//             $rawTotalDue = $row->balanceData['balance'] ?? 0;
+//             $row->totalDueofCustomer = $this->formatWithPrecision($rawTotalDue);
+//             if ($partyId && $row->transaction->party->id == $partyId) {
+//                 $finalPartyLedgerBalance = $rawTotalDue;
+//                 $balanceData = $row->balanceData;
+//                 if($balanceData['status'] == 'you_collect'){
+//                     $finalBalanceStatus = 'You Collect';
+//                     $finalBalanceClass = 'text-success';
+//                 }elseif($balanceData['status'] == 'you_pay'){
+//                     $finalBalanceStatus = 'You Pay';
+//                     $finalBalanceClass = 'text-danger';
+//                 }else{
+//                     $finalBalanceStatus = 'No Balance';
+//                     $finalBalanceClass = '';
+//                 }
+//             }
+//         } else {
+//              $row->totalDueofCustomer = 'N/A';
+//         }
+
+//         $paid = 0;
+//         if ($row->transaction_type === 'Sale') {
+//             $paid = $row->cash_in;
+//             $row->balance = $grandTotal - $paid;
+//         } elseif ($row->transaction_type === 'Purchase') {
+//             $paid = $row->cash_out;
+//             $row->balance = $grandTotal - $paid;
+//         } else {
+//             $row->balance = $row->cash_in - $row->cash_out;
+//         }
+
+//         if ($row->transaction?->party) {
+//             $type = ucfirst($row->transaction->party->party_type);
+//             $row->party_name = "{$type} : {$row->transaction->party->getFullName()}";
+//         } else {
+//             $row->party_name = $row->transaction?->category?->name ?? '';
+//         }
+
+//         $row->category_name = $row->transaction?->category?->name ?? '';
+//         $row->products = $row->transaction?->itemTransaction?->map(
+//             fn($itemTx) =>
+//             $itemTx->item?->name . ' (' . $itemTx->quantity . ')'
+//         )->implode('<br>') ?? '';
+
+//         $invoice = method_exists($row->transaction, 'getTableCode') ? $row->transaction->getTableCode() : '';
+//         $row->invoice_or_bill_code = $invoice . ($row->products ? '<br>' . $row->products : '');
+
+//         $row->transaction_details = $row->transaction_type;
+
+//         return $row;
+//     });
+
+//     $searchValue = $request->input('search')['value'] ?? null;
+
+//     if ($searchValue) {
+//         $lowerSearch = strtolower($searchValue);
+//         $transactions = $transactions->filter(function ($row) use ($lowerSearch) {
+//             return stripos($row->party_name ?? '', $lowerSearch) !== false ||
+//                    stripos($row->transaction_details ?? '', $lowerSearch) !== false ||
+//                    stripos($row->invoice_or_bill_code ?? '', $lowerSearch) !== false;
+//         })->values();
+//     }
+
+//     $transactions = $transactions->reverse()->values();
+//     $sumGrandTotal = $transactions->sum('grandTotal');
+//     $sumCashIn = $transactions->sum('cash_in');
+//     $sumCashOut = $transactions->sum('cash_out');
+//     $runningBalance = 0;
+//     $transactions = $transactions->map(function ($row) use (&$runningBalance) {
+//         $runningBalance += $row->balance;
+//         $row->running_balance = $runningBalance;
+//         return $row;
+//     });
+
+//     $totalGrandTotal = $this->formatWithPrecision($sumGrandTotal, comma: false);
+//     $totalCashIn = $this->formatWithPrecision($sumCashIn, comma: false);
+//     $totalCashOut = $this->formatWithPrecision($sumCashOut, comma: false);
+
+//     if ($partyId && is_numeric($finalPartyLedgerBalance)) {
+//         $formattedBalance = $this->formatWithPrecision($finalPartyLedgerBalance, comma: false);
+//         $finalTotalBalanceOutput = '<span class="' . $finalBalanceClass . '">' .
+//                                     $formattedBalance . ' (' . $finalBalanceStatus . ')</span>';
+//     } else {
+//         $finalTotalBalanceOutput = '----';
+//     }
+
+//     return DataTables::of($transactions)
+//         ->addIndexColumn()
+//         ->addColumn('transaction_date', fn($row) => $row->transaction_date)
+//         ->addColumn('flow_type', fn($row) => ucfirst($row->flow_type))
+//         ->addColumn('invoice_or_bill_code', fn($row) => $row->invoice_or_bill_code ?: 'Adjustment')
+//         ->addColumn('party_name', fn($row) => $row->party_name)
+//         ->addColumn('transaction_details', fn($row) => $row->transaction_details)
+//         ->addColumn('grand_total', fn($row) => $this->formatWithPrecision($row->grandTotal, comma: false))
+//         ->addColumn('cash_in', fn($row) => $this->formatWithPrecision($row->cash_in, comma: false))
+//         ->addColumn('cash_out', fn($row) => $this->formatWithPrecision($row->cash_out, comma: false))
+//         ->addColumn('balance', fn($row) => '----')
+//         ->rawColumns(['invoice_or_bill_code'])
+//         ->with([
+//             'total_grand_total' => $totalGrandTotal,
+//             'total_cash_in' => $totalCashIn,
+//             'total_cash_out' => $totalCashOut,
+//             'total_balance' => $finalTotalBalanceOutput,
+//         ])
+//         ->rawColumns(['invoice_or_bill_code', 'total_balance'])
+//         ->make(true);
+// }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// New Updated COde
+
 public function datatableListLedger(Request $request)
 {
-    $cashId     = $this->paymentTypeService->returnPaymentTypeId(PaymentTypesUniqueCode::CASH->value);
-    $chequeId   = $this->paymentTypeService->returnPaymentTypeId(PaymentTypesUniqueCode::CHEQUE->value);
+    $cashId      = $this->paymentTypeService->returnPaymentTypeId(PaymentTypesUniqueCode::CASH->value);
+    $chequeId    = $this->paymentTypeService->returnPaymentTypeId(PaymentTypesUniqueCode::CHEQUE->value);
     $dangerTypes = ['Expense', 'Purchase', 'Sale Return', 'Purchase Order'];
     $this->paymentTransactionService->usedTransactionTypeValue();
     $fromDate = $request->from_date ? $this->toSystemDateFormat($request->from_date) : null;
@@ -619,47 +842,29 @@ public function datatableListLedger(Request $request)
     $partyId = $request->party_id;
     $partyType = $request->party_type;
 
-    $certainPartyRelatedMorphKeys = [
-        'Party Payment',
-        'Purchase',
-        'Sale',
-        'Sale Return',
-        'Purchase Return',
-    ];
-
-    $allowedTypes = [
-        'Sale',
-        'Purchase',
-        'Party Payment',
-        'Sale Return',
-        'Purchase Return',
-    ];
+    $certainPartyRelatedMorphKeys = ['Party Payment', 'Purchase', 'Sale', 'Sale Return', 'Purchase Return'];
+    $allowedTypes = ['Sale', 'Purchase', 'Party Payment', 'Sale Return', 'Purchase Return'];
 
     $partyFilter = function (EloquentBuilder $q) use ($partyId, $partyType, $certainPartyRelatedMorphKeys) {
         if ($partyId || $partyType) {
-            $q->whereHasMorph(
-                'transaction',
-                $certainPartyRelatedMorphKeys,
-                function ($r) use ($partyId, $partyType) {
-                    if ($partyId) {
-                        $r->where('party_id', $partyId);
-                    } elseif ($partyType) {
-                        $r->whereHas('party', fn($p) => $p->where('party_type', $partyType));
-                    }
+            $q->whereHasMorph('transaction', $certainPartyRelatedMorphKeys, function ($r) use ($partyId, $partyType) {
+                if ($partyId) {
+                    $r->where('party_id', $partyId);
+                } elseif ($partyType) {
+                    $r->whereHas('party', fn($p) => $p->where('party_type', $partyType));
                 }
-            );
+            });
         }
     };
 
-    $baseQuery = PaymentTransaction::with('transaction', 'paymentType')
+    $baseQuery = PaymentTransaction::with('transaction.party', 'paymentType')
         ->whereIn('transaction_type', $allowedTypes)
         ->when($fromDate, fn($q) => $q->where('transaction_date', '>=', $fromDate))
         ->when($toDate, fn($q) => $q->where('transaction_date', '<=', $toDate));
 
     $cashFlow = (clone $baseQuery)
         ->where(function ($q) use ($cashId) {
-            $q->where('payment_type_id', $cashId)
-                ->orWhere('transfer_to_payment_type_id', $cashId);
+            $q->where('payment_type_id', $cashId)->orWhere('transfer_to_payment_type_id', $cashId);
         })
         ->when($partyId || $partyType, $partyFilter)
         ->get()
@@ -674,7 +879,21 @@ public function datatableListLedger(Request $request)
         ->get()
         ->map(fn($row) => tap($row, fn(&$r) => $r->flow_type = 'bank'));
 
-    $transactions = $cashFlow->merge($bankFlow)
+    $partyTransactions = PartyTransaction::with('party')
+        ->when($partyId, fn($q) => $q->where('party_id', $partyId))
+        ->when($fromDate, fn($q) => $q->where('transaction_date', '>=', $fromDate))
+        ->when($toDate, fn($q) => $q->where('transaction_date', '<=', $toDate))
+        ->get()
+        ->map(function($row) {
+            $row->flow_type = 'Opening';
+            $row->amount = ($row->to_pay > 0) ? $row->to_pay : $row->to_receive;
+            // The amount is captured in the description string here
+            $row->transaction_type = "Opening Balance ($row->amount)";
+            $row->type_of_payment = ($row->to_pay > 0) ? 'pay' : 'receive';
+            return $row;
+        });
+
+    $transactions = $cashFlow->merge($bankFlow)->merge($partyTransactions)
         ->sortBy(fn($row) => $row->transaction_date . ' ' . $row->created_at)
         ->values();
 
@@ -685,78 +904,80 @@ public function datatableListLedger(Request $request)
 
     $transactions = $transactions->map(function ($row) use (&$balance, &$finalPartyLedgerBalance, &$finalBalanceStatus, &$finalBalanceClass, $dangerTypes, $partyId) {
 
-        $isCashIn = true;
-        if (!empty($row->type_of_payment)) {
-            $type = strtolower(trim($row->type_of_payment));
+        // --- UPDATED LOGIC FOR OPENING BALANCE ---
+        if ($row->flow_type === 'Opening') {
+            $row->cash_in = 0;
+            $row->cash_out = 0;
+            // Balance logic for opening: Receive adds to balance, Pay subtracts
+            $row->balance = ($row->type_of_payment === 'receive') ? $row->amount : -$row->amount;
+        } else {
+            $isCashIn = true;
+            $type = strtolower(trim($row->type_of_payment ?? ''));
             if ($type === 'receive') $isCashIn = true;
             elseif ($type === 'pay') $isCashIn = false;
             else $isCashIn = !in_array($row->transaction_type, $dangerTypes);
-        } else {
-            $isCashIn = !in_array($row->transaction_type, $dangerTypes);
+
+            $row->cash_in = $isCashIn ? $row->amount : 0;
+            $row->cash_out = !$isCashIn ? $row->amount : 0;
+
+            // Resolve the actual transaction object (Morph vs Direct)
+            $actualTx = ($row instanceof \App\Models\Party\PartyTransaction) ? $row : $row->transaction;
+            
+            if ($row->transaction_type === 'Sale') {
+                $row->balance = ($actualTx->grand_total ?? 0) - $row->cash_in;
+            } elseif ($row->transaction_type === 'Purchase') {
+                $row->balance = ($actualTx->grand_total ?? 0) - $row->cash_out;
+            } else {
+                $row->balance = $row->cash_in - $row->cash_out;
+            }
         }
 
-        $row->cash_in = $isCashIn ? $row->amount : 0;
-        $row->cash_out = !$isCashIn ? $row->amount : 0;
-        $grandTotal = $row->transaction->grand_total ?? 0;
-        $row->grandTotal = $grandTotal;
+        $actualTx = ($row instanceof \App\Models\Party\PartyTransaction) ? $row : $row->transaction;
+        $row->grandTotal = $actualTx->grand_total ?? 0;
 
-        $rawTotalDue = 0;
-        if ($row->transaction?->party) {
-            $row->balanceData = $this->partyService->getPartyBalance([$row->transaction->party->id]);
+        if ($actualTx?->party) {
+            $row->balanceData = $this->partyService->getPartyBalance([$actualTx->party->id]);
             $rawTotalDue = $row->balanceData['balance'] ?? 0;
             $row->totalDueofCustomer = $this->formatWithPrecision($rawTotalDue);
-            if ($partyId && $row->transaction->party->id == $partyId) {
+            
+            if ($partyId && $actualTx->party->id == $partyId) {
                 $finalPartyLedgerBalance = $rawTotalDue;
-                $balanceData = $row->balanceData;
-                if($balanceData['status'] == 'you_collect'){
-                    $finalBalanceStatus = 'You Collect';
-                    $finalBalanceClass = 'text-success';
-                }elseif($balanceData['status'] == 'you_pay'){
-                    $finalBalanceStatus = 'You Pay';
-                    $finalBalanceClass = 'text-danger';
+                $status = $row->balanceData['status'] ?? '';
+                if($status == 'you_collect'){
+                    $finalBalanceStatus = 'You Collect'; $finalBalanceClass = 'text-success';
+                }elseif($status == 'you_pay'){
+                    $finalBalanceStatus = 'You Pay'; $finalBalanceClass = 'text-danger';
                 }else{
-                    $finalBalanceStatus = 'No Balance';
-                    $finalBalanceClass = '';
+                    $finalBalanceStatus = 'No Balance'; $finalBalanceClass = '';
                 }
             }
         } else {
              $row->totalDueofCustomer = 'N/A';
         }
 
-        $paid = 0;
-        if ($row->transaction_type === 'Sale') {
-            $paid = $row->cash_in;
-            $row->balance = $grandTotal - $paid;
-        } elseif ($row->transaction_type === 'Purchase') {
-            $paid = $row->cash_out;
-            $row->balance = $grandTotal - $paid;
+        // Party Name Assignment
+        if ($actualTx?->party) {
+            $pType = ucfirst($actualTx->party->party_type);
+            $row->party_name = "{$pType} : {$actualTx->party->getFullName()}";
         } else {
-            $row->balance = $row->cash_in - $row->cash_out;
+            $row->party_name = $actualTx?->category?->name ?? '';
         }
 
-        if ($row->transaction?->party) {
-            $type = ucfirst($row->transaction->party->party_type);
-            $row->party_name = "{$type} : {$row->transaction->party->getFullName()}";
-        } else {
-            $row->party_name = $row->transaction?->category?->name ?? '';
-        }
-
-        $row->category_name = $row->transaction?->category?->name ?? '';
-        $row->products = $row->transaction?->itemTransaction?->map(
-            fn($itemTx) =>
-            $itemTx->item?->name . ' (' . $itemTx->quantity . ')'
+        $row->category_name = $actualTx?->category?->name ?? '';
+        $row->products = $actualTx?->itemTransaction?->map(
+            fn($itemTx) => $itemTx->item?->name . ' (' . $itemTx->quantity . ')'
         )->implode('<br>') ?? '';
 
-        $invoice = method_exists($row->transaction, 'getTableCode') ? $row->transaction->getTableCode() : '';
+        $invoice = method_exists($actualTx, 'getTableCode') ? $actualTx->getTableCode() : '';
         $row->invoice_or_bill_code = $invoice . ($row->products ? '<br>' . $row->products : '');
-
+        
+        // Transaction Details column gets the label we set earlier
         $row->transaction_details = $row->transaction_type;
 
         return $row;
     });
 
     $searchValue = $request->input('search')['value'] ?? null;
-
     if ($searchValue) {
         $lowerSearch = strtolower($searchValue);
         $transactions = $transactions->filter(function ($row) use ($lowerSearch) {
@@ -770,24 +991,13 @@ public function datatableListLedger(Request $request)
     $sumGrandTotal = $transactions->sum('grandTotal');
     $sumCashIn = $transactions->sum('cash_in');
     $sumCashOut = $transactions->sum('cash_out');
+    
     $runningBalance = 0;
     $transactions = $transactions->map(function ($row) use (&$runningBalance) {
         $runningBalance += $row->balance;
         $row->running_balance = $runningBalance;
         return $row;
     });
-
-    $totalGrandTotal = $this->formatWithPrecision($sumGrandTotal, comma: false);
-    $totalCashIn = $this->formatWithPrecision($sumCashIn, comma: false);
-    $totalCashOut = $this->formatWithPrecision($sumCashOut, comma: false);
-
-    if ($partyId && is_numeric($finalPartyLedgerBalance)) {
-        $formattedBalance = $this->formatWithPrecision($finalPartyLedgerBalance, comma: false);
-        $finalTotalBalanceOutput = '<span class="' . $finalBalanceClass . '">' .
-                                    $formattedBalance . ' (' . $finalBalanceStatus . ')</span>';
-    } else {
-        $finalTotalBalanceOutput = '----';
-    }
 
     return DataTables::of($transactions)
         ->addIndexColumn()
@@ -797,22 +1007,21 @@ public function datatableListLedger(Request $request)
         ->addColumn('party_name', fn($row) => $row->party_name)
         ->addColumn('transaction_details', fn($row) => $row->transaction_details)
         ->addColumn('grand_total', fn($row) => $this->formatWithPrecision($row->grandTotal, comma: false))
-        ->addColumn('cash_in', fn($row) => $this->formatWithPrecision($row->cash_in, comma: false))
-        ->addColumn('cash_out', fn($row) => $this->formatWithPrecision($row->cash_out, comma: false))
+        ->addColumn('cash_in', fn($row) => $row->flow_type === 'Opening' ? '0.00' : $this->formatWithPrecision($row->cash_in, comma: false))
+        ->addColumn('cash_out', fn($row) => $row->flow_type === 'Opening' ? '0.00' : $this->formatWithPrecision($row->cash_out, comma: false))
         ->addColumn('balance', fn($row) => '----')
-        ->rawColumns(['invoice_or_bill_code'])
+        ->addColumn('running_balance', fn($row) => $this->formatWithPrecision($row->running_balance, comma: false))
         ->with([
-            'total_grand_total' => $totalGrandTotal,
-            'total_cash_in' => $totalCashIn,
-            'total_cash_out' => $totalCashOut,
-            'total_balance' => $finalTotalBalanceOutput,
+            'total_grand_total' => $this->formatWithPrecision($sumGrandTotal, comma: false),
+            'total_cash_in' => $this->formatWithPrecision($sumCashIn, comma: false),
+            'total_cash_out' => $this->formatWithPrecision($sumCashOut, comma: false),
+            'total_balance' => $partyId && is_numeric($finalPartyLedgerBalance) 
+                ? '<span class="' . $finalBalanceClass . '">' . $this->formatWithPrecision($finalPartyLedgerBalance, comma: false) . ' (' . $finalBalanceStatus . ')</span>'
+                : '----',
         ])
         ->rawColumns(['invoice_or_bill_code', 'total_balance'])
         ->make(true);
 }
-
-
-
 
 
 

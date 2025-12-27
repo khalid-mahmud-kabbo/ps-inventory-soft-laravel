@@ -72,4 +72,9 @@ class PartyTransaction extends Model
         return $this->morphMany(AccountTransaction::class, 'transaction');
     }
 
+    public function party()
+{
+    return $this->belongsTo(\App\Models\Party\Party::class, 'party_id');
+}
+
 }
