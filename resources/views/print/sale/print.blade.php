@@ -162,10 +162,10 @@
                    @endif
                    <td class="text-end">
                         {{ $formatNumber->formatQuantity($transaction->quantity) }}
+                        <small>{{ $transaction->unit->name }}</small>
                     </td>
                     <td class=" text-end">
                         {{ $formatNumber->formatWithPrecision($transaction->unit_price) }}<br>
-                        <small>{{ $transaction->unit->name }}</small>
                     </td>
                     @if(app('company')['show_discount'])
                     <td class=" text-end">
